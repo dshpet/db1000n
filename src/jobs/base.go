@@ -5,6 +5,8 @@ import (
 	"context"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/Arriven/db1000n/src/utils/templates"
 )
 
@@ -17,6 +19,7 @@ type GlobalConfig struct {
 	ScaleFactor   int
 	SkipEncrypted bool
 	Debug         bool
+	ClientID      string
 }
 
 const (
@@ -28,7 +31,7 @@ func isInEncryptedContext(ctx context.Context) bool {
 }
 
 // Job comment for linter
-type Job = func(ctx context.Context, globalConfig GlobalConfig, args Args) (data interface{}, err error)
+type Job = func(ctx context.Context, logger *zap.Logger, globalConfig GlobalConfig, args Args) (data interface{}, err error)
 
 // Config comment for linter
 type Config struct {

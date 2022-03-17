@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/Arriven/db1000n/src/jobs"
 	"github.com/Arriven/db1000n/src/runner/config"
@@ -48,8 +49,10 @@ func New(cfg *Config) (*Runner, error) {
 }
 
 // Run the runner and block until Stop() is called
-func (r *Runner) Run(ctx context.Context) {
-	clientID := uuid.New()
+func (r *Runner) Run(ctx context.Context, logger *zap.Logger) {
+	clientID := uuid.MustParse(r.config.Global.ClientID)
+
+	metrics.IncClient(clientID.String())
 
 	refreshTimer := time.NewTicker(r.refreshTimeout)
 
@@ -71,7 +74,7 @@ func (r *Runner) Run(ctx context.Context) {
 					cancel()
 				}
 
-				cancel = r.runJobs(ctx, cfg, clientID)
+				cancel = r.runJobs(ctx, logger, cfg, clientID)
 			}
 		} else {
 			log.Println("The config has not changed. Keep calm and carry on!")
@@ -92,21 +95,21 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-func (r *Runner) runJobs(ctx context.Context, cfg *config.Config, clientID uuid.UUID) (cancel context.CancelFunc) {
+func (r *Runner) runJobs(ctx context.Context, logger *zap.Logger, cfg *config.Config, clientID uuid.UUID) (cancel context.CancelFunc) {
 	ctx, cancel = context.WithCancel(ctx)
 
 	var jobInstancesCount int
 
 	for i := range cfg.Jobs {
-		if len(cfg.Jobs[i].Filter) != 0 && strings.TrimSpace(templates.ParseAndExecute(cfg.Jobs[i].Filter, clientID.ID())) != "true" {
-			log.Println("There is a filter defined for a job but this client doesn't pass it - skip the job")
+		if len(cfg.Jobs[i].Filter) != 0 && strings.TrimSpace(templates.ParseAndExecute(logger, cfg.Jobs[i].Filter, clientID.ID())) != "true" {
+			logger.Info("There is a filter defined for a job but this client doesn't pass it - skip the job")
 
 			continue
 		}
 
 		job := jobs.Get(cfg.Jobs[i].Type)
 		if job == nil {
-			log.Printf("Unknown job %q", cfg.Jobs[i].Type)
+			logger.Error("unknown job", zap.String("type", cfg.Jobs[i].Type))
 
 			continue
 		}
@@ -121,16 +124,16 @@ func (r *Runner) runJobs(ctx context.Context, cfg *config.Config, clientID uuid.
 
 		cfgMap := make(map[string]interface{})
 		if err := utils.Decode(cfg.Jobs[i], &cfgMap); err != nil {
-			log.Fatal("failed to encode cfg map")
+			logger.Fatal("failed to encode cfg map")
 		}
 
 		ctx := context.WithValue(ctx, templates.ContextKey("config"), cfgMap)
 
 		for j := 0; j < cfg.Jobs[i].Count; j++ {
 			go func(i int) {
-				_, err := job(ctx, r.config.Global, cfg.Jobs[i].Args)
+				_, err := job(ctx, logger, r.config.Global, cfg.Jobs[i].Args)
 				if err != nil {
-					log.Println("error running job:", err)
+					logger.Error("error running job", zap.Error(err))
 				}
 			}(i)
 
